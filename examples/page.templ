@@ -1,0 +1,26 @@
+package main
+
+templ Page(globResource int) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+			<title>SimSync</title>
+			<script src="https://cdn.jsdelivr.net/npm/htmx.org@4.0.0/dist/htmx.min.js"></script>
+			<script src="https://cdn.jsdelivr.net/npm/htmx.org@4.0.0/dist/ext/hx-sse.min.js"></script>
+			<style>
+				body {
+					background-color: black;
+					color: white;
+				}
+			</style>
+		</head>
+		<body>
+			<p>Hello, world!</p>
+			<div hx-sse:connect="/connect" hx-target="#output" hx-swap="innerHTML"></div>
+			<output id="output"></output>
+			<p>resource { globResource }</p>
+		</body>
+	</html>
+}

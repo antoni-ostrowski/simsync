@@ -1,0 +1,14 @@
+[tools]
+
+go = "1.27.0"
+
+
+[tasks.example-dev]
+run = "templ generate && go run ./examples"
+
+[tasks.redis-clean]
+run = "docker rm -f redis"
+
+[tasks.redis-run]
+depends = "redis-clean"
+run =  "docker run -d --name redis -p 6379:6379 redis"
