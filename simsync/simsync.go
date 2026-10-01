@@ -2,7 +2,7 @@ package simsync
 
 import (
 	"context"
-	"encoding/json"
+	"encoding"
 	"fmt"
 	"time"
 
@@ -48,36 +48,8 @@ func New(cfg Config) *Engine {
 	}
 }
 
-const (
-	MessageTypeEvent = iota
-	MessageTypeMarkup
-)
-
-// payload stores for
-//
-// event type: event name that, client's htmx should listen on, so it can trigger refetch
-// markup type: string of htmx markup that uses OOB to trigger swap on client, separated by \n
-type Message struct {
-	Type    int8   `json:"type"`
-	Payload string `json:"payload"`
-}
-
-func (m Message) MarshalBinary() (data []byte, err error) {
-	return json.Marshal(m)
-}
-
-func NewEventMessage(payload string) Message {
-	return Message{
-		Type:    MessageTypeEvent,
-		Payload: payload,
-	}
-}
-
-func NewMarkupMessage(payload string) Message {
-	return Message{
-		Type:    MessageTypeMarkup,
-		Payload: payload,
-	}
+type Frontend interface {
+	Method() error
 }
 
 // Track registers that a specific client/user is actively viewing a resource.
@@ -124,7 +96,7 @@ func (e *Engine) UntrackAll(ctx context.Context, clientID string) error {
 }
 
 // Invalidate finds everyone currently tracking a dependency and triggers an HTMX update event.
-func (e *Engine) Invalidate(ctx context.Context, resource string, mess Message) error {
+func (e *Engine) Invalidate(ctx context.Context, resource string, msg encoding.BinaryMarshaler) error {
 	resourceKey := e.createResourceKey(resource)
 
 	// 1. Get everyone watching this specific dependency
@@ -141,7 +113,7 @@ func (e *Engine) Invalidate(ctx context.Context, resource string, mess Message) 
 	pipe := e.redis.Pipeline()
 	for _, clientID := range clientIDs {
 		userChannel := e.GetUserChannel(clientID)
-		pipe.Publish(ctx, userChannel, mess)
+		pipe.Publish(ctx, userChannel, msg)
 	}
 
 	_, err = pipe.Exec(ctx)

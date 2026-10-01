@@ -1,16 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/antoni-ostrowski/simsync/simsync"
+	simsync_htmx "github.com/antoni-ostrowski/simsync/simsync/handlers/htmx"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -27,9 +24,7 @@ func (s *Store) getCounter(ctx context.Context, e *simsync.Engine) int {
 
 func (s *Store) setCounter(ctx context.Context, newCount int, e *simsync.Engine) {
 	s.counter = newCount
-	var buf bytes.Buffer
-	CounterOOB(newCount).Render(ctx, &buf)
-	e.Invalidate(ctx, "counter", simsync.NewMarkupMessage(buf.String()))
+	e.Invalidate(ctx, "counter", simsync_htmx.NewEventHtmxMsg("counter-event"))
 }
 
 func main() {
@@ -56,46 +51,7 @@ func main() {
 		}
 	})
 
-	http.HandleFunc("GET /connect", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-
-		flusher := w.(http.Flusher)
-		userID := "aaa"
-		pubsub := rdb.Subscribe(r.Context(), engine.GetUserChannel(userID))
-		defer func() {
-			pubsub.Close()
-			engine.UntrackAll(context.Background(), userID)
-		}()
-
-		for redisMsg := range pubsub.Channel() {
-			slog.Info("got new msg! ", "channel", redisMsg.Channel, "payload", redisMsg.Payload)
-
-			var msg simsync.Message
-			if err := json.Unmarshal([]byte(redisMsg.Payload), &msg); err != nil {
-				slog.Error("failed to unmarshal somehow", "error", err.Error())
-				continue
-			}
-
-			switch msg.Type {
-			case simsync.MessageTypeEvent:
-				slog.Info("telling client to refetch, via event", "event", msg.Payload)
-				fmt.Fprintf(w, "event: %s\n", msg.Payload)
-				fmt.Fprintf(w, "data: {}\n\n")
-			case simsync.MessageTypeMarkup:
-				slog.Info("seding markup to client to swap!", "markup", msg.Payload)
-				lines := strings.Split(msg.Payload, "\n")
-				for _, line := range lines {
-					cleaned := strings.TrimRight(line, "\r")
-					fmt.Fprintf(w, "data: %s\n", cleaned)
-				}
-				fmt.Fprintf(w, "\n")
-			}
-			flusher.Flush()
-
-		}
-	})
+	http.HandleFunc("GET /connect", simsync_htmx.CreateHtmxSSEHandler(engine, rdb))
 
 	http.HandleFunc("POST /{count}", func(w http.ResponseWriter, r *http.Request) {
 		str := r.PathValue("count")
