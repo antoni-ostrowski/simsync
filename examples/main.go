@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/antoni-ostrowski/simsync/simsync"
 	"github.com/redis/go-redis/v9"
@@ -24,7 +27,9 @@ func (s *Store) getCounter(ctx context.Context, e *simsync.Engine) int {
 
 func (s *Store) setCounter(ctx context.Context, newCount int, e *simsync.Engine) {
 	s.counter = newCount
-	e.Invalidate(ctx, "counter", "counter-event")
+	var buf bytes.Buffer
+	CounterOOB(newCount).Render(ctx, &buf)
+	e.Invalidate(ctx, "counter", simsync.NewMarkupMessage(buf.String()))
 }
 
 func main() {
@@ -45,9 +50,8 @@ func main() {
 	})
 
 	http.HandleFunc("GET /counter", func(w http.ResponseWriter, r *http.Request) {
-		slog.Info("counter handler RAN!")
 		val := store.getCounter(r.Context(), engine)
-		if err := CounterTempl(val).Render(r.Context(), w); err != nil {
+		if err := Counter(val).Render(r.Context(), w); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	})
@@ -58,31 +62,38 @@ func main() {
 		w.Header().Set("Connection", "keep-alive")
 
 		flusher := w.(http.Flusher)
-		// for i := range 10 {
-		// 	fmt.Fprintf(w, "data: <h1>%v</h1>\n\n", i)
-		// 	flusher.Flush()
-		// 	time.Sleep(time.Second * 1)
-		// }
-
-		// userID := getUserFromSession(r)
 		userID := "aaa"
-		//
-		// // 1. Subscribe to the channel managed by your package
 		pubsub := rdb.Subscribe(r.Context(), engine.GetUserChannel(userID))
-		//
-		// // 2. The magic cleanup! If they close the tab, clear their active tracking immediately
 		defer func() {
 			pubsub.Close()
-			// Instant zero-leak cleanup using the reverse index we built
-			_ = engine.UntrackAll(context.Background(), userID)
+			engine.UntrackAll(context.Background(), userID)
 		}()
-		//
-		// flusher := w.(http.Flusher)
-		for msg := range pubsub.Channel() {
-			slog.Info("got new msg! ", "channel", msg.Channel, "payload", msg.Payload)
-			fmt.Fprintf(w, "event: %s\n", msg.Payload)
-			fmt.Fprintf(w, "data: {}\n\n")
+
+		for redisMsg := range pubsub.Channel() {
+			slog.Info("got new msg! ", "channel", redisMsg.Channel, "payload", redisMsg.Payload)
+
+			var msg simsync.Message
+			if err := json.Unmarshal([]byte(redisMsg.Payload), &msg); err != nil {
+				slog.Error("failed to unmarshal somehow", "error", err.Error())
+				continue
+			}
+
+			switch msg.Type {
+			case simsync.MessageTypeEvent:
+				slog.Info("telling client to refetch, via event", "event", msg.Payload)
+				fmt.Fprintf(w, "event: %s\n", msg.Payload)
+				fmt.Fprintf(w, "data: {}\n\n")
+			case simsync.MessageTypeMarkup:
+				slog.Info("seding markup to client to swap!", "markup", msg.Payload)
+				lines := strings.Split(msg.Payload, "\n")
+				for _, line := range lines {
+					cleaned := strings.TrimRight(line, "\r")
+					fmt.Fprintf(w, "data: %s\n", cleaned)
+				}
+				fmt.Fprintf(w, "\n")
+			}
 			flusher.Flush()
+
 		}
 	})
 

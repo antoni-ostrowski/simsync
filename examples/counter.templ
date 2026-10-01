@@ -1,5 +1,17 @@
 package main
 
-templ CounterTempl(val int) {
-	<p hx-get="/counter" hx-trigger="counter-event from:body" hx-swap="outerHTML">resource { val }</p>
+templ Counter(val int) {
+	<p id="counter-display" hx-get="/counter" hx-trigger="counter-event from:body" hx-swap="outerHTML">resource { val }</p>
+}
+
+templ CounterOOB(val int) {
+	<p
+		id="counter-display"
+		hx-get="/counter"
+		hx-trigger="counter-event from:body"
+		hx-swap="outerHTML"
+		hx-swap-oob="true"
+	>
+		resource { (val) } (from OOB)
+	</p>
 }

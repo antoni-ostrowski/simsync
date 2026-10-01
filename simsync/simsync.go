@@ -2,11 +2,24 @@ package simsync
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
+
+// structure
+
+// here we use HashSet so each resource key creates separate kv store
+// prefix:dep:dependency - actual resource_key
+// resource_key -> clientID - storing that this client is actively using this resource
+
+// prefix:client:clientID - clientLookupKey
+// clientLookupKey -> resource_key, so we keep track of what exactly client is looking at, easier to then clean everything up
+
+// pub/sub
+// prefix:stream:clientID - channel topic, which we can send to, and if client is active then its subscribed to it (in SSE handler)
 
 type Engine struct {
 	redis      *redis.Client
@@ -35,45 +48,72 @@ func New(cfg Config) *Engine {
 	}
 }
 
-// Track registers that a specific client/user is actively viewing a dependency resource.
-func (e *Engine) Track(ctx context.Context, clientID string, dependency string) error {
-	key := fmt.Sprintf("%s:dep:%s", e.prefix, dependency)
+const (
+	MessageTypeEvent = iota
+	MessageTypeMarkup
+)
 
-	// Store client ID with the current unix timestamp
-	err := e.redis.HSet(ctx, key, clientID, time.Now().Unix()).Err()
+// payload stores for
+//
+// event type: event name that, client's htmx should listen on, so it can trigger refetch
+// markup type: string of htmx markup that uses OOB to trigger swap on client, separated by \n
+type Message struct {
+	Type    int8   `json:"type"`
+	Payload string `json:"payload"`
+}
+
+func (m Message) MarshalBinary() (data []byte, err error) {
+	return json.Marshal(m)
+}
+
+func NewEventMessage(payload string) Message {
+	return Message{
+		Type:    MessageTypeEvent,
+		Payload: payload,
+	}
+}
+
+func NewMarkupMessage(payload string) Message {
+	return Message{
+		Type:    MessageTypeMarkup,
+		Payload: payload,
+	}
+}
+
+// Track registers that a specific client/user is actively viewing a resource.
+func (e *Engine) Track(ctx context.Context, clientID string, resource string) error {
+	resourceKey := e.createResourceKey(resource)
+
+	err := e.redis.HSet(ctx, resourceKey, clientID, time.Now().Unix()).Err()
 	if err != nil {
 		return fmt.Errorf("failed to track dependency: %w", err)
 	}
 
-	// Also maintain an inverse lookup index so we know exactly what a client is looking at
-	// This makes disconnecting/cleaning up incredibly fast!
-	clientLookupKey := fmt.Sprintf("%s:client:%s", e.prefix, clientID)
-	err = e.redis.SAdd(ctx, clientLookupKey, dependency).Err()
+	clientLookupKey := e.createClientLookupKey(clientID)
+	err = e.redis.SAdd(ctx, clientLookupKey, resourceKey).Err()
 	if err != nil {
 		return fmt.Errorf("failed to track client reverse index: %w", err)
 	}
 
-	// Set safety expirations so stale data cleans up automatically over time
-	e.redis.Expire(ctx, key, e.defaultTTL)
+	e.redis.Expire(ctx, resourceKey, e.defaultTTL)
 	e.redis.Expire(ctx, clientLookupKey, e.defaultTTL)
 	return nil
 }
 
 // UntrackAll completely scrubs a client from all dependencies when they close their connection.
 func (e *Engine) UntrackAll(ctx context.Context, clientID string) error {
-	clientLookupKey := fmt.Sprintf("%s:client:%s", e.prefix, clientID)
+	clientLookupKey := e.createClientLookupKey(clientID)
 
-	// 1. Find all dependencies this specific client was looking at
-	dependencies, err := e.redis.SMembers(ctx, clientLookupKey).Result()
-	if err != nil || len(dependencies) == 0 {
+	// 1. Find all resources this specific client was looking at
+	resources, err := e.redis.SMembers(ctx, clientLookupKey).Result()
+	if err != nil || len(resources) == 0 {
 		return err
 	}
 
 	// 2. Remove this client from all of those dependency hashes
 	pipe := e.redis.Pipeline()
-	for _, dep := range dependencies {
-		depKey := fmt.Sprintf("%s:dep:%s", e.prefix, dep)
-		pipe.HDel(ctx, depKey, clientID)
+	for _, resourceKey := range resources {
+		pipe.HDel(ctx, resourceKey, clientID)
 	}
 
 	// 3. Delete the client's inverse index key
@@ -84,11 +124,11 @@ func (e *Engine) UntrackAll(ctx context.Context, clientID string) error {
 }
 
 // Invalidate finds everyone currently tracking a dependency and triggers an HTMX update event.
-func (e *Engine) Invalidate(ctx context.Context, dependency string, htmxEventName string) error {
-	depKey := fmt.Sprintf("%s:dep:%s", e.prefix, dependency)
+func (e *Engine) Invalidate(ctx context.Context, resource string, mess Message) error {
+	resourceKey := e.createResourceKey(resource)
 
 	// 1. Get everyone watching this specific dependency
-	clientIDs, err := e.redis.HKeys(ctx, depKey).Result()
+	clientIDs, err := e.redis.HKeys(ctx, resourceKey).Result()
 	if err != nil {
 		return fmt.Errorf("failed to fetch dependency viewers: %w", err)
 	}
@@ -100,8 +140,8 @@ func (e *Engine) Invalidate(ctx context.Context, dependency string, htmxEventNam
 	// 2. Broadcast the HTMX event name to each active user's private SSE update channel
 	pipe := e.redis.Pipeline()
 	for _, clientID := range clientIDs {
-		userChannel := fmt.Sprintf("%s:stream:%s", e.prefix, clientID)
-		pipe.Publish(ctx, userChannel, htmxEventName)
+		userChannel := e.GetUserChannel(clientID)
+		pipe.Publish(ctx, userChannel, mess)
 	}
 
 	_, err = pipe.Exec(ctx)
@@ -116,4 +156,12 @@ func (e *Engine) Invalidate(ctx context.Context, dependency string, htmxEventNam
 // Use this inside your main HTTP SSE handler to subscribe the connection to the right channel.
 func (e *Engine) GetUserChannel(clientID string) string {
 	return fmt.Sprintf("%s:stream:%s", e.prefix, clientID)
+}
+
+func (e *Engine) createResourceKey(resource string) string {
+	return fmt.Sprintf("%s:dep:%s", e.prefix, resource)
+}
+
+func (e *Engine) createClientLookupKey(clientID string) string {
+	return fmt.Sprintf("%s:client:%s", e.prefix, clientID)
 }

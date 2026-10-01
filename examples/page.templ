@@ -17,8 +17,8 @@ templ Page(globResource int) {
 			</style>
 		</head>
 		<body hx-sse:connect="/connect">
-			<p>Hello, world!</p>
-			@CounterTempl(globResource)
+			<p id="hello">Hello, world!</p>
+			@Counter(globResource)
 		</body>
 	</html>
 }

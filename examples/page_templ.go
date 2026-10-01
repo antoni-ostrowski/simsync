@@ -29,11 +29,11 @@ func Page(globResource int) templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<!doctype html><html lang=\"en\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>SimSync</title><script src=\"https://cdn.jsdelivr.net/npm/htmx.org@4.0.0/dist/htmx.min.js\"></script><script src=\"https://cdn.jsdelivr.net/npm/htmx.org@4.0.0/dist/ext/hx-sse.min.js\"></script><style>\n\t\t\t\tbody {\n\t\t\t\t\tbackground-color: black;\n\t\t\t\t\tcolor: white;\n\t\t\t\t}\n\t\t\t</style></head><body hx-sse:connect=\"/connect\"><p>Hello, world!</p>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<!doctype html><html lang=\"en\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>SimSync</title><script src=\"https://cdn.jsdelivr.net/npm/htmx.org@4.0.0/dist/htmx.min.js\"></script><script src=\"https://cdn.jsdelivr.net/npm/htmx.org@4.0.0/dist/ext/hx-sse.min.js\"></script><style>\n\t\t\t\tbody {\n\t\t\t\t\tbackground-color: black;\n\t\t\t\t\tcolor: white;\n\t\t\t\t}\n\t\t\t</style></head><body hx-sse:connect=\"/connect\"><p id=\"hello\">Hello, world!</p>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = CounterTempl(globResource).Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = Counter(globResource).Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
