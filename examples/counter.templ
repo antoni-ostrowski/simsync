@@ -1,0 +1,5 @@
+package main
+
+templ CounterTempl(val int) {
+	<p hx-get="/counter" hx-trigger="counter-event from:body" hx-swap="outerHTML">resource { val }</p>
+}
