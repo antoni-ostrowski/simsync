@@ -4,7 +4,7 @@ go = "1.27.0"
 
 
 [tasks.example-dev]
-run = "templ generate && go run ./examples"
+run = "templ generate && go run ./example"
 
 [tasks.redis-clean]
 run = "docker rm -f redis"
