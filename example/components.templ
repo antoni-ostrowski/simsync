@@ -16,11 +16,25 @@ templ Page(globResource int) {
 				}
 			</style>
 		</head>
-		<body>
-			<p>Hello, world!</p>
-			<div hx-sse:connect="/connect" hx-target="#output" hx-swap="innerHTML"></div>
-			<output id="output"></output>
-			<p>resource { globResource }</p>
+		<body hx-sse:connect="/connect">
+			<p id="hello">Hello, world!</p>
+			@Counter(globResource)
 		</body>
 	</html>
+}
+
+templ Counter(val int) {
+	<p id="counter-display" hx-get="/counter" hx-trigger="counter-event from:body" hx-swap="outerHTML">resource { val }</p>
+}
+
+templ CounterOOB(val int) {
+	<p
+		id="counter-display"
+		hx-get="/counter"
+		hx-trigger="counter-event from:body"
+		hx-swap="outerHTML"
+		hx-swap-oob="true"
+	>
+		resource { (val) } (from OOB)
+	</p>
 }
