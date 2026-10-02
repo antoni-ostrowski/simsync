@@ -19,6 +19,10 @@ templ Page(globResource int) {
 		<body hx-sse:connect="/connect">
 			<p id="hello">Hello, world!</p>
 			@Counter(globResource)
+			<form hx-post="/counter" hx-swap="none">
+				<input name="counter" type="text"/>
+				<button type="submit">update counter</button>
+			</form>
 		</body>
 	</html>
 }

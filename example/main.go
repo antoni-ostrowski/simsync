@@ -24,9 +24,14 @@ func (s *Store) getCounter(ctx context.Context, e *simsync.Engine) int {
 	return s.counter
 }
 
+type CounterPayload struct {
+	Count int `json:"count"`
+}
+
 func (s *Store) setCounter(ctx context.Context, newCount int, e *simsync.Engine) {
 	s.counter = newCount
-	e.Invalidate(ctx, simsync.NewStreamMessage("counter", strconv.Itoa(newCount)))
+	m, _ := simsync.NewStreamMessage("counter", CounterPayload{Count: newCount})
+	e.Invalidate(ctx, m)
 }
 
 func main() {
@@ -50,13 +55,19 @@ func main() {
 		}
 	})
 
-	htmxRegistery := simsync_htmx.Registry{
-		"counter": simsync_htmx.EventProfile{EventName: "counter-event"},
+	htmxRegistry := simsync_htmx.Registry{
+		"counter": simsync_htmx.NewMarkupProfile(
+			func(ctx context.Context, p CounterPayload) (string, error) {
+				return simsync_htmx.RenderTemplToStr(ctx, Counter(p.Count).Render)
+			},
+		),
 	}
-	http.HandleFunc("GET /connect", simsync_htmx.CreateHtmxSSEHandler(engine, htmxRegistery))
 
-	http.HandleFunc("POST /{count}", func(w http.ResponseWriter, r *http.Request) {
-		str := r.PathValue("count")
+	http.HandleFunc("GET /connect", simsync_htmx.CreateHtmxSSEHandler(engine, htmxRegistry))
+
+	http.HandleFunc("POST /counter", func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		str := r.FormValue("counter")
 		n, _ := strconv.ParseInt(str, 10, 64)
 		slog.Info("setting new counter", "new", str)
 		store.setCounter(r.Context(), int(n), engine)

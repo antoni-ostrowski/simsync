@@ -27,7 +27,7 @@ import (
 ) 
 
 rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-engine := simsync.New(simsync_redis.NewRedisBackend(rdb), time.Hour, "simsync")
+e := simsync.New(simsync_redis.NewRedisBackend(rdb), time.Hour, "simsync")
 ```
 
 Tracking resource. You pass resource that client has requested ("is viewing") and clientID.  
@@ -45,7 +45,9 @@ Invalidating resource. Call after you updated the resource in your source of tru
 resourceName := "project1"
 newValue := "some_value" 
 // will send event to every client that is 'looking' at the resource
-e.Invalidate(ctx, simsync.NewStreamMessage(resourceName, newValue)
+// StreamMessage takes resource name and json.RawMessage, you can send new value state, or other data needed in event handler
+m, _ := simsync.NewStreamMessage("counter", CounterPayload{Count: newCount})
+e.Invalidate(ctx, m)
 ```
 
 
@@ -83,10 +85,10 @@ type Storer interface {
 
 If you want, you can easly implement your own backend with specific storage or pubsub system. 
 
-Handlers are also abstracted away, so you can implement the even propagation to clients however you like. Theres no concrete interface for handler yet, so to not force any structure, you have access to engine and can implement anything you like!
+Handlers are also abstracted away, so you can implement the even propagation to clients however you like. Theres no concrete interface for handler yet, so to not force any structure, you have access to engine and can implement anything you like! Engine backend lets you subscribe and handle events.
 
 ### adapters
 
 simsync has built in: 
 - redis backend (`simsync/backends/redis`)
-- htmx handler based on SSE (`simsync/handlers/htmx`)
+- htmx even handler based on SSE (`simsync/handlers/htmx`)

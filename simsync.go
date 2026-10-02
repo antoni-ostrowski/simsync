@@ -20,18 +20,25 @@ import (
 // prefix:stream:clientID - channel topic, which we can send to, and if client is active then its subscribed to it (in SSE handler)
 
 type StreamMessage struct {
-	Resource string `json:"resource"`
-	Value    string `json:"value"`
+	Resource string          `json:"resource"`
+	Value    json.RawMessage `json:"value"`
 }
 
 // r - resource
 //
 // v - new value
-func NewStreamMessage(r, v string) StreamMessage {
-	return StreamMessage{
-		Resource: r,
-		Value:    v,
+func NewStreamMessage[T any](r string, v T) (StreamMessage, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return StreamMessage{}, err
 	}
+	return StreamMessage{Resource: r, Value: raw}, nil
+}
+
+func DecodeValue[T any](m StreamMessage) (T, error) {
+	var v T
+	err := json.Unmarshal(m.Value, &v)
+	return v, err
 }
 
 func (m StreamMessage) MarshalBinary() (data []byte, err error) {

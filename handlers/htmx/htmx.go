@@ -1,8 +1,11 @@
 package htmx
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -10,25 +13,84 @@ import (
 	"github.com/antoni-ostrowski/simsync"
 )
 
-type Profile interface {
-	isProfile()
+// Profile is implemented by each profile type with its own SSE sending logic.
+type Profile[T any] interface {
+	Decode(raw json.RawMessage) (T, error)
+	RenderSSE(ctx context.Context, w http.ResponseWriter, val T) error
 }
 
-// used to send htmx events, so client can listen on them, and refetch if triggered
-type EventProfile struct {
+// erasedProfile type-erases Profile[T] so different T can coexist in one Registry.
+type erasedProfile struct {
+	decode func(json.RawMessage) (any, error)
+	render func(context.Context, http.ResponseWriter, any) error
+}
+
+func EraseProfile[T any](p Profile[T]) erasedProfile {
+	return erasedProfile{
+		decode: func(raw json.RawMessage) (any, error) { return p.Decode(raw) },
+		render: func(ctx context.Context, w http.ResponseWriter, val any) error {
+			return p.RenderSSE(ctx, w, val.(T))
+		},
+	}
+}
+
+type Registry = map[string]erasedProfile
+
+// EventProfile sends an empty htmx event, client listens and refetches.
+type EventProfile[T any] struct {
 	EventName string
+	DecodeFn  *func(json.RawMessage) (T, error)
 }
 
-func (EventProfile) isProfile() {}
-
-// used to declare htmx markup with OOB swap true, to modify anything on the client
-type MarkupProfile struct {
-	RenderFn func(ctx context.Context, value string) (string, error)
+func (p EventProfile[T]) Decode(raw json.RawMessage) (T, error) {
+	if p.DecodeFn != nil {
+		return (*p.DecodeFn)(raw)
+	}
+	var val T
+	return val, json.Unmarshal(raw, &val)
+}
+func (p EventProfile[T]) RenderSSE(_ context.Context, w http.ResponseWriter, _ T) error {
+	fmt.Fprintf(w, "event: %s\n", p.EventName)
+	fmt.Fprintf(w, "data: {}\n\n")
+	return nil
 }
 
-func (MarkupProfile) isProfile() {}
+// NewEventProfile creates an EventProfile with default json.Unmarshal decoding.
+func NewEventProfile[T any](eventName string) erasedProfile {
+	return EraseProfile(EventProfile[T]{EventName: eventName})
+}
 
-type Registry = map[string]Profile
+// MarkupProfile renders HTML server-side and sends it as OOB swap data.
+//
+// if you want multiple fragments, separate them with \n
+type MarkupProfile[T any] struct {
+	DecodeFn *func(json.RawMessage) (T, error)
+	RenderFn func(context.Context, T) (string, error)
+}
+
+func (p MarkupProfile[T]) Decode(raw json.RawMessage) (T, error) {
+	if p.DecodeFn != nil {
+		return (*p.DecodeFn)(raw)
+	}
+	var val T
+	return val, json.Unmarshal(raw, &val)
+}
+func (p MarkupProfile[T]) RenderSSE(ctx context.Context, w http.ResponseWriter, val T) error {
+	html, err := p.RenderFn(ctx, val)
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(html, "\n") {
+		fmt.Fprintf(w, "data: %s\n", strings.TrimRight(line, "\r"))
+	}
+	fmt.Fprintf(w, "\n")
+	return nil
+}
+
+// NewMarkupProfile creates a MarkupProfile with default json.Unmarshal decoding.
+func NewMarkupProfile[T any](render func(context.Context, T) (string, error)) erasedProfile {
+	return EraseProfile(MarkupProfile[T]{RenderFn: render})
+}
 
 func CreateHtmxSSEHandler(engine *simsync.Engine, registry Registry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -55,37 +117,26 @@ func CreateHtmxSSEHandler(engine *simsync.Engine, registry Registry) http.Handle
 				continue
 			}
 
-			switch p := profile.(type) {
-			case EventProfile:
-				slog.Info("handling the event type")
-				fmt.Fprintf(w, "event: %s\n", p.EventName)
-				fmt.Fprintf(w, "data: {}\n\n")
+			val, err := profile.decode(coreMsg.Value)
+			if err != nil {
+				slog.Error("decode failed", "error", err.Error(), "resource", coreMsg.Resource)
+				continue
+			}
 
-			case MarkupProfile:
-				slog.Info("handling the markup")
-				if p.RenderFn == nil {
-					slog.Error("RenderFn is nil for markup mode", "resource", coreMsg.Resource)
-					continue
-				}
-
-				htmlContent, err := p.RenderFn(r.Context(), coreMsg.Value)
-				if err != nil {
-					slog.Error("RenderFn error", "error", err.Error(), "resource", coreMsg.Resource)
-					continue
-				}
-
-				lines := strings.Split(htmlContent, "\n")
-				for _, line := range lines {
-					fmt.Fprintf(w, "data: %s\n", strings.TrimRight(line, "\r"))
-				}
-				fmt.Fprintf(w, "\n")
-
-			default:
-				slog.Error("unknown profile variant encountered", "resource", coreMsg.Resource)
-				panic("incorrect profile variant!? htmx handler switch failed")
+			if err := profile.render(r.Context(), w, val); err != nil {
+				slog.Error("render failed", "error", err.Error(), "resource", coreMsg.Resource)
+				continue
 			}
 
 			flusher.Flush()
 		}
 	}
+}
+
+func RenderTemplToStr(ctx context.Context, render func(ctx context.Context, w io.Writer) error) (string, error) {
+	var buf bytes.Buffer
+	if err := render(ctx, &buf); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }
