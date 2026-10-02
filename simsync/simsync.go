@@ -2,11 +2,9 @@ package simsync
 
 import (
 	"context"
-	"encoding"
+	"encoding/json"
 	"fmt"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
 
 // structure
@@ -21,54 +19,84 @@ import (
 // pub/sub
 // prefix:stream:clientID - channel topic, which we can send to, and if client is active then its subscribed to it (in SSE handler)
 
+type StreamMessage struct {
+	Resource string `json:"resource"`
+	Value    string `json:"value"`
+}
+
+// r - resource
+//
+// v - new value
+func NewStreamMessage(r, v string) StreamMessage {
+	return StreamMessage{
+		Resource: r,
+		Value:    v,
+	}
+}
+
+func (m StreamMessage) MarshalBinary() (data []byte, err error) {
+	return json.Marshal(m)
+}
+
+type PubSub interface {
+	Subscribe(ctx context.Context, channel string) (<-chan StreamMessage, func())
+	Publish(ctx context.Context, channel string, msg StreamMessage) error
+}
+type Storer interface {
+	HSet(ctx context.Context, key string, values ...any) error
+	SAdd(ctx context.Context, key string, members ...any) error
+	HKeys(ctx context.Context, key string) ([]string, error)
+	SMembers(ctx context.Context, key string) ([]string, error)
+	HDel(ctx context.Context, key string, fields ...string) error
+	Del(ctx context.Context, keys ...string) error
+	Expire(ctx context.Context, key string, expiration time.Duration) error
+}
+
+type Backend interface {
+	Storer
+	PubSub
+}
+
 type Engine struct {
-	redis      *redis.Client
+	Backend    Backend
 	prefix     string
 	defaultTTL time.Duration
 }
 
-type Config struct {
-	RedisClient *redis.Client
-	Namespace   string
-	DefaultTTL  time.Duration
-}
-
-func New(cfg Config) *Engine {
-	if cfg.Namespace == "" {
-		cfg.Namespace = "simsync"
+// ttl will default to 1 hour if passed 0
+//
+// namespace will default to "simsync" if provided empty string
+func New(b Backend, ttl time.Duration, n string) *Engine {
+	if ttl <= 0 {
+		ttl = 1 * time.Hour
 	}
-	if cfg.DefaultTTL == 0 {
-		cfg.DefaultTTL = time.Hour
+	if n == "" {
+		n = "simsync"
 	}
-
 	return &Engine{
-		redis:      cfg.RedisClient,
-		prefix:     cfg.Namespace,
-		defaultTTL: cfg.DefaultTTL,
+		prefix:     n,
+		defaultTTL: ttl,
+		Backend:    b,
 	}
-}
-
-type Frontend interface {
-	Method() error
 }
 
 // Track registers that a specific client/user is actively viewing a resource.
 func (e *Engine) Track(ctx context.Context, clientID string, resource string) error {
 	resourceKey := e.createResourceKey(resource)
 
-	err := e.redis.HSet(ctx, resourceKey, clientID, time.Now().Unix()).Err()
+	err := e.Backend.HSet(ctx, resourceKey, clientID, time.Now().Unix())
 	if err != nil {
 		return fmt.Errorf("failed to track dependency: %w", err)
 	}
 
 	clientLookupKey := e.createClientLookupKey(clientID)
-	err = e.redis.SAdd(ctx, clientLookupKey, resourceKey).Err()
+	err = e.Backend.SAdd(ctx, clientLookupKey, resourceKey)
 	if err != nil {
 		return fmt.Errorf("failed to track client reverse index: %w", err)
 	}
 
-	e.redis.Expire(ctx, resourceKey, e.defaultTTL)
-	e.redis.Expire(ctx, clientLookupKey, e.defaultTTL)
+	e.Backend.Expire(ctx, resourceKey, e.defaultTTL)
+	e.Backend.Expire(ctx, clientLookupKey, e.defaultTTL)
 	return nil
 }
 
@@ -77,30 +105,27 @@ func (e *Engine) UntrackAll(ctx context.Context, clientID string) error {
 	clientLookupKey := e.createClientLookupKey(clientID)
 
 	// 1. Find all resources this specific client was looking at
-	resources, err := e.redis.SMembers(ctx, clientLookupKey).Result()
+	resources, err := e.Backend.SMembers(ctx, clientLookupKey)
 	if err != nil || len(resources) == 0 {
 		return err
 	}
 
 	// 2. Remove this client from all of those dependency hashes
-	pipe := e.redis.Pipeline()
 	for _, resourceKey := range resources {
-		pipe.HDel(ctx, resourceKey, clientID)
+		err = e.Backend.HDel(ctx, resourceKey, clientID)
 	}
 
 	// 3. Delete the client's inverse index key
-	pipe.Del(ctx, clientLookupKey)
-
-	_, err = pipe.Exec(ctx)
+	err = e.Backend.Del(ctx, clientLookupKey)
 	return err
 }
 
 // Invalidate finds everyone currently tracking a dependency and triggers an HTMX update event.
-func (e *Engine) Invalidate(ctx context.Context, resource string, msg encoding.BinaryMarshaler) error {
-	resourceKey := e.createResourceKey(resource)
+func (e *Engine) Invalidate(ctx context.Context, msg StreamMessage) error {
+	resourceKey := e.createResourceKey(msg.Resource)
 
 	// 1. Get everyone watching this specific dependency
-	clientIDs, err := e.redis.HKeys(ctx, resourceKey).Result()
+	clientIDs, err := e.Backend.HKeys(ctx, resourceKey)
 	if err != nil {
 		return fmt.Errorf("failed to fetch dependency viewers: %w", err)
 	}
@@ -110,13 +135,11 @@ func (e *Engine) Invalidate(ctx context.Context, resource string, msg encoding.B
 	}
 
 	// 2. Broadcast the HTMX event name to each active user's private SSE update channel
-	pipe := e.redis.Pipeline()
 	for _, clientID := range clientIDs {
 		userChannel := e.GetUserChannel(clientID)
-		pipe.Publish(ctx, userChannel, msg)
+		err = e.Backend.Publish(ctx, userChannel, msg)
 	}
 
-	_, err = pipe.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to broadcast invalidations: %w", err)
 	}

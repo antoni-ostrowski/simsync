@@ -2,49 +2,35 @@ package htmx
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/antoni-ostrowski/simsync/simsync"
-	"github.com/redis/go-redis/v9"
 )
 
-const (
-	MessageTypeEvent = iota
-	MessageTypeMarkup
-)
-
-// payload stores for
-//
-// event type: event name that, client's htmx should listen on, so it can trigger refetch
-// markup type: string of htmx markup that uses OOB to trigger swap on client, separated by \n
-type HtmxMsg struct {
-	Type    int8   `json:"type"`
-	Payload string `json:"payload"`
+type Profile interface {
+	isProfile()
 }
 
-func (m HtmxMsg) MarshalBinary() (data []byte, err error) {
-	return json.Marshal(m)
+// used to send htmx events, so client can listen on them, and refetch if triggered
+type EventProfile struct {
+	EventName string
 }
 
-func NewEventHtmxMsg(payload string) HtmxMsg {
-	return HtmxMsg{
-		Type:    MessageTypeEvent,
-		Payload: payload,
-	}
+func (EventProfile) isProfile() {}
+
+// used to declare htmx markup with OOB swap true, to modify anything on the client
+type MarkupProfile struct {
+	RenderFn func(ctx context.Context, value string) (string, error)
 }
 
-func NewMarkupHtmxMsg(payload string) HtmxMsg {
-	return HtmxMsg{
-		Type:    MessageTypeMarkup,
-		Payload: payload,
-	}
-}
+func (MarkupProfile) isProfile() {}
 
-func CreateHtmxSSEHandler(engine *simsync.Engine, rdb *redis.Client) http.HandlerFunc {
+type Registry = map[string]Profile
+
+func CreateHtmxSSEHandler(engine *simsync.Engine, registry Registry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -52,38 +38,54 @@ func CreateHtmxSSEHandler(engine *simsync.Engine, rdb *redis.Client) http.Handle
 
 		flusher := w.(http.Flusher)
 		userID := "aaa"
-		pubsub := rdb.Subscribe(r.Context(), engine.GetUserChannel(userID))
+		channel, close := engine.Backend.Subscribe(r.Context(), engine.GetUserChannel(userID))
 		defer func() {
-			pubsub.Close()
+			close()
 			engine.UntrackAll(context.Background(), userID)
 		}()
+		fmt.Fprintf(w, ": ok\n\n")
+		flusher.Flush()
+		slog.Info("got to see handler")
 
-		for redisMsg := range pubsub.Channel() {
-			slog.Info("got new msg! ", "channel", redisMsg.Channel, "payload", redisMsg.Payload)
-
-			var msg HtmxMsg
-
-			if err := json.Unmarshal([]byte(redisMsg.Payload), &msg); err != nil {
-				slog.Error("failed to unmarshal somehow", "error", err.Error())
+		for coreMsg := range channel {
+			slog.Info("got new msg!", "value", coreMsg.Value)
+			profile, ok := registry[coreMsg.Resource]
+			if !ok {
+				slog.Warn("no profile found for resource", "resource", coreMsg.Resource)
 				continue
 			}
 
-			switch msg.Type {
-			case MessageTypeEvent:
-				slog.Info("telling client to refetch, via event", "event", msg.Payload)
-				fmt.Fprintf(w, "event: %s\n", msg.Payload)
+			switch p := profile.(type) {
+			case EventProfile:
+				slog.Info("handling the event type")
+				fmt.Fprintf(w, "event: %s\n", p.EventName)
 				fmt.Fprintf(w, "data: {}\n\n")
-			case MessageTypeMarkup:
-				slog.Info("seding markup to client to swap!", "markup", msg.Payload)
-				lines := strings.Split(msg.Payload, "\n")
+
+			case MarkupProfile:
+				slog.Info("handling the markup")
+				if p.RenderFn == nil {
+					slog.Error("RenderFn is nil for markup mode", "resource", coreMsg.Resource)
+					continue
+				}
+
+				htmlContent, err := p.RenderFn(r.Context(), coreMsg.Value)
+				if err != nil {
+					slog.Error("RenderFn error", "error", err.Error(), "resource", coreMsg.Resource)
+					continue
+				}
+
+				lines := strings.Split(htmlContent, "\n")
 				for _, line := range lines {
-					cleaned := strings.TrimRight(line, "\r")
-					fmt.Fprintf(w, "data: %s\n", cleaned)
+					fmt.Fprintf(w, "data: %s\n", strings.TrimRight(line, "\r"))
 				}
 				fmt.Fprintf(w, "\n")
-			}
-			flusher.Flush()
 
+			default:
+				slog.Error("unknown profile variant encountered", "resource", coreMsg.Resource)
+				panic("incorrect profile variant!? htmx handler switch failed")
+			}
+
+			flusher.Flush()
 		}
 	}
 }

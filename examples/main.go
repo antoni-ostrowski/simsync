@@ -5,8 +5,10 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/antoni-ostrowski/simsync/simsync"
+	simsync_redis "github.com/antoni-ostrowski/simsync/simsync/backends/redis"
 	simsync_htmx "github.com/antoni-ostrowski/simsync/simsync/handlers/htmx"
 	"github.com/redis/go-redis/v9"
 )
@@ -24,16 +26,13 @@ func (s *Store) getCounter(ctx context.Context, e *simsync.Engine) int {
 
 func (s *Store) setCounter(ctx context.Context, newCount int, e *simsync.Engine) {
 	s.counter = newCount
-	e.Invalidate(ctx, "counter", simsync_htmx.NewEventHtmxMsg("counter-event"))
+	e.Invalidate(ctx, simsync.NewStreamMessage("counter", strconv.Itoa(newCount)))
 }
 
 func main() {
 	rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-	engine := simsync.New(simsync.Config{
-		RedisClient: rdb,
-		Namespace:   "simsync",
-	})
-	_ = engine
+
+	engine := simsync.New(simsync_redis.NewRedisBackend(rdb), time.Hour, "simsync")
 
 	store := Store{counter: 0}
 
@@ -51,7 +50,10 @@ func main() {
 		}
 	})
 
-	http.HandleFunc("GET /connect", simsync_htmx.CreateHtmxSSEHandler(engine, rdb))
+	htmxRegistery := simsync_htmx.Registry{
+		"counter": simsync_htmx.EventProfile{EventName: "counter-event"},
+	}
+	http.HandleFunc("GET /connect", simsync_htmx.CreateHtmxSSEHandler(engine, htmxRegistery))
 
 	http.HandleFunc("POST /{count}", func(w http.ResponseWriter, r *http.Request) {
 		str := r.PathValue("count")
