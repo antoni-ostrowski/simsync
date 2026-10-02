@@ -29,7 +29,7 @@ func Page(globResource int) templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<!doctype html><html lang=\"en\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>SimSync</title><script src=\"https://cdn.jsdelivr.net/npm/htmx.org@4.0.0/dist/htmx.min.js\"></script><script src=\"https://cdn.jsdelivr.net/npm/htmx.org@4.0.0/dist/ext/hx-sse.min.js\"></script><style>\n\t\t\t\tbody {\n\t\t\t\t\tbackground-color: black;\n\t\t\t\t\tcolor: white;\n\t\t\t\t}\n\t\t\t</style></head><body hx-sse:connect=\"/connect\"><p id=\"hello\">Hello, world!</p>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<!doctype html><html lang=\"en\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>SimSync</title><script src=\"https://cdn.jsdelivr.net/npm/htmx.org@4.0.0/dist/htmx.min.js\"></script><script src=\"https://cdn.jsdelivr.net/npm/htmx.org@4.0.0/dist/ext/hx-sse.min.js\"></script><style>\n\t\t\t\tbody {\n\t\t\t\t\tmax-width: 560px;\n\t\t\t\t\tmargin: 2rem auto;\n\t\t\t\t\tpadding: 0 1rem;\n\t\t\t\t\tbackground: #111;\n\t\t\t\t\tcolor: #ddd;\n\t\t\t\t\tfont-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n\t\t\t\t\tline-height: 1.4;\n\t\t\t\t}\n\t\t\t\tform {\n\t\t\t\t\tmargin-top: 0.75rem;\n\t\t\t\t}\n\t\t\t\tinput, button {\n\t\t\t\t\tpadding: 0.25rem 0.5rem;\n\t\t\t\t\tfont: inherit;\n\t\t\t\t}\n\t\t\t</style></head><body hx-sse:connect=\"/connect\"><p id=\"hello\">Hello, world!</p>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -37,7 +37,7 @@ func Page(globResource int) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<form hx-post=\"/counter\" hx-swap=\"none\"><input name=\"counter\" type=\"text\"> <button type=\"submit\">update counter</button></form></body></html>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<form hx-post=\"/counter\" hx-swap=\"none\"><input name=\"counter\" type=\"number\"> <button type=\"submit\">update counter</button></form></body></html>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -73,7 +73,7 @@ func Counter(val int) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(val)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `example/components.templ`, Line: 31, Col: 114}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `example/components.templ`, Line: 44, Col: 114}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -115,7 +115,7 @@ func CounterOOB(val int) templ.Component {
 		var templ_7745c5c3_Var5 string
 		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs((val))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `example/components.templ`, Line: 42, Col: 18}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `example/components.templ`, Line: 55, Col: 18}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 		if templ_7745c5c3_Err != nil {

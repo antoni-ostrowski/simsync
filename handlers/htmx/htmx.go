@@ -13,83 +13,72 @@ import (
 	"github.com/antoni-ostrowski/simsync"
 )
 
-// Profile is implemented by each profile type with its own SSE sending logic.
-type Profile[T any] interface {
-	Decode(raw json.RawMessage) (T, error)
-	RenderSSE(ctx context.Context, w http.ResponseWriter, val T) error
-}
-
-// erasedProfile type-erases Profile[T] so different T can coexist in one Registry.
-type erasedProfile struct {
+// Profile is an opaque SSE profile. Build one with Event or Markup.
+type Profile struct {
 	decode func(json.RawMessage) (any, error)
 	render func(context.Context, http.ResponseWriter, any) error
 }
 
-func EraseProfile[T any](p Profile[T]) erasedProfile {
-	return erasedProfile{
-		decode: func(raw json.RawMessage) (any, error) { return p.Decode(raw) },
-		render: func(ctx context.Context, w http.ResponseWriter, val any) error {
-			return p.RenderSSE(ctx, w, val.(T))
+type Registry map[string]Profile
+
+// RegistryEntry pairs a resource name with its Profile.
+// Construct with Event or Markup, collect with NewRegistry.
+type RegistryEntry struct {
+	resource string
+	profile  Profile
+}
+
+// Event sends an empty htmx event, client listens and refetches.
+// No payload decoding needed.
+func Event(resource, eventName string) RegistryEntry {
+	return RegistryEntry{
+		resource: resource,
+		profile: Profile{
+			decode: func(json.RawMessage) (any, error) { return nil, nil },
+			render: func(_ context.Context, w http.ResponseWriter, _ any) error {
+				fmt.Fprintf(w, "event: %s\n", eventName)
+				fmt.Fprintf(w, "data: {}\n\n")
+				return nil
+			},
 		},
 	}
 }
 
-type Registry = map[string]erasedProfile
-
-// EventProfile sends an empty htmx event, client listens and refetches.
-type EventProfile[T any] struct {
-	EventName string
-	DecodeFn  *func(json.RawMessage) (T, error)
-}
-
-func (p EventProfile[T]) Decode(raw json.RawMessage) (T, error) {
-	if p.DecodeFn != nil {
-		return (*p.DecodeFn)(raw)
+// Markup renders HTML server-side and sends it as SSE data.
+// Separate multiple fragments with \n.
+func Markup[T any](resource string, render func(context.Context, T) (string, error)) RegistryEntry {
+	return RegistryEntry{
+		resource: resource,
+		profile: Profile{
+			decode: func(raw json.RawMessage) (any, error) {
+				var v T
+				return v, json.Unmarshal(raw, &v)
+			},
+			render: func(ctx context.Context, w http.ResponseWriter, val any) error {
+				html, err := render(ctx, val.(T))
+				if err != nil {
+					return err
+				}
+				writeDataLines(w, html)
+				return nil
+			},
+		},
 	}
-	var val T
-	return val, json.Unmarshal(raw, &val)
-}
-func (p EventProfile[T]) RenderSSE(_ context.Context, w http.ResponseWriter, _ T) error {
-	fmt.Fprintf(w, "event: %s\n", p.EventName)
-	fmt.Fprintf(w, "data: {}\n\n")
-	return nil
 }
 
-// NewEventProfile creates an EventProfile with default json.Unmarshal decoding.
-func NewEventProfile[T any](eventName string) erasedProfile {
-	return EraseProfile(EventProfile[T]{EventName: eventName})
-}
-
-// MarkupProfile renders HTML server-side and sends it as OOB swap data.
-//
-// if you want multiple fragments, separate them with \n
-type MarkupProfile[T any] struct {
-	DecodeFn *func(json.RawMessage) (T, error)
-	RenderFn func(context.Context, T) (string, error)
-}
-
-func (p MarkupProfile[T]) Decode(raw json.RawMessage) (T, error) {
-	if p.DecodeFn != nil {
-		return (*p.DecodeFn)(raw)
+func NewRegistry(entries ...RegistryEntry) Registry {
+	m := make(Registry, len(entries))
+	for _, e := range entries {
+		m[e.resource] = e.profile
 	}
-	var val T
-	return val, json.Unmarshal(raw, &val)
+	return m
 }
-func (p MarkupProfile[T]) RenderSSE(ctx context.Context, w http.ResponseWriter, val T) error {
-	html, err := p.RenderFn(ctx, val)
-	if err != nil {
-		return err
-	}
+
+func writeDataLines(w http.ResponseWriter, html string) {
 	for _, line := range strings.Split(html, "\n") {
 		fmt.Fprintf(w, "data: %s\n", strings.TrimRight(line, "\r"))
 	}
 	fmt.Fprintf(w, "\n")
-	return nil
-}
-
-// NewMarkupProfile creates a MarkupProfile with default json.Unmarshal decoding.
-func NewMarkupProfile[T any](render func(context.Context, T) (string, error)) erasedProfile {
-	return EraseProfile(MarkupProfile[T]{RenderFn: render})
 }
 
 func CreateHtmxSSEHandler(engine *simsync.Engine, registry Registry) http.HandlerFunc {
@@ -107,13 +96,11 @@ func CreateHtmxSSEHandler(engine *simsync.Engine, registry Registry) http.Handle
 		}()
 		fmt.Fprintf(w, ": ok\n\n")
 		flusher.Flush()
-		slog.Info("got to see handler")
 
 		for coreMsg := range channel {
-			slog.Info("got new msg!", "value", coreMsg.Value)
 			profile, ok := registry[coreMsg.Resource]
 			if !ok {
-				slog.Warn("no profile found for resource", "resource", coreMsg.Resource)
+				slog.Debug("no profile found for resource", "resource", coreMsg.Resource)
 				continue
 			}
 
@@ -133,6 +120,9 @@ func CreateHtmxSSEHandler(engine *simsync.Engine, registry Registry) http.Handle
 	}
 }
 
+// takes render func and executes it to generate markup string
+//
+// render func matches templ .Render func signature
 func RenderTemplToStr(ctx context.Context, render func(ctx context.Context, w io.Writer) error) (string, error) {
 	var buf bytes.Buffer
 	if err := render(ctx, &buf); err != nil {

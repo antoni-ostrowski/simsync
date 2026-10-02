@@ -11,8 +11,20 @@ templ Page(globResource int) {
 			<script src="https://cdn.jsdelivr.net/npm/htmx.org@4.0.0/dist/ext/hx-sse.min.js"></script>
 			<style>
 				body {
-					background-color: black;
-					color: white;
+					max-width: 560px;
+					margin: 2rem auto;
+					padding: 0 1rem;
+					background: #111;
+					color: #ddd;
+					font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+					line-height: 1.4;
+				}
+				form {
+					margin-top: 0.75rem;
+				}
+				input, button {
+					padding: 0.25rem 0.5rem;
+					font: inherit;
 				}
 			</style>
 		</head>
@@ -20,7 +32,7 @@ templ Page(globResource int) {
 			<p id="hello">Hello, world!</p>
 			@Counter(globResource)
 			<form hx-post="/counter" hx-swap="none">
-				<input name="counter" type="text"/>
+				<input name="counter" type="number"/>
 				<button type="submit">update counter</button>
 			</form>
 		</body>
@@ -28,6 +40,7 @@ templ Page(globResource int) {
 }
 
 templ Counter(val int) {
+	// this is how you can listen on the events sent from SSE conn, with "hx-trigger"
 	<p id="counter-display" hx-get="/counter" hx-trigger="counter-event from:body" hx-swap="outerHTML">resource { val }</p>
 }
 

@@ -20,17 +20,15 @@ type Store struct {
 }
 
 func (s *Store) getCounter(ctx context.Context, e *simsync.Engine) int {
+	// track counter resource for dummy user aaa
 	e.Track(ctx, "aaa", "counter")
 	return s.counter
 }
 
-type CounterPayload struct {
-	Count int `json:"count"`
-}
-
 func (s *Store) setCounter(ctx context.Context, newCount int, e *simsync.Engine) {
 	s.counter = newCount
-	m, _ := simsync.NewStreamMessage("counter", CounterPayload{Count: newCount})
+	// updated counter resource
+	m, _ := simsync.NewStreamMessage("counter", "")
 	e.Invalidate(ctx, m)
 }
 
@@ -55,13 +53,10 @@ func main() {
 		}
 	})
 
-	htmxRegistry := simsync_htmx.Registry{
-		"counter": simsync_htmx.NewMarkupProfile(
-			func(ctx context.Context, p CounterPayload) (string, error) {
-				return simsync_htmx.RenderTemplToStr(ctx, Counter(p.Count).Render)
-			},
-		),
-	}
+	// simplest way, just mapping counter resource to "counter-event", that client is going to receive
+	htmxRegistry := simsync_htmx.NewRegistry(
+		simsync_htmx.Event("counter", "counter-event"),
+	)
 
 	http.HandleFunc("GET /connect", simsync_htmx.CreateHtmxSSEHandler(engine, htmxRegistry))
 
