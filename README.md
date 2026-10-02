@@ -3,8 +3,9 @@ simsync (simple sync) is a simple sync library, targeting flow of propagating up
 
 - everything is explicit, you control if you want resource to be tracked, or when to invalidate it.
 - simsync doesn't care about how you store data, it only tracks *resources* and *who* is viewing them. 
-- high extensibility, engine is core, backend part, and how you propagate events can be customized (checkout [adapters](#adapters)).
+- high extensibility, at it's core is engine struct, backend part and how you propagate events can be customized (checkout [adapters](#adapters)).
 
+> see demo from `/example` [demo](#demo)
 # installation
 
 ```bash
@@ -92,3 +93,11 @@ Handlers are also abstracted away, so you can implement the even propagation to 
 simsync has built in: 
 - redis backend (`simsync/backends/redis`)
 - htmx even handler based on SSE (`simsync/handlers/htmx`)
+
+### demo
+
+Two clients are viewing same resource and get notified when resource gets updated in storage.
+
+https://github.com/user-attachments/assets/f3eeb18f-0c3a-4c1e-86c5-0dda254acf00
+
+
