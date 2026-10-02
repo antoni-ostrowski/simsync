@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/antoni-ostrowski/simsync/simsync"
+	"github.com/antoni-ostrowski/simsync"
 	"github.com/redis/go-redis/v9"
 )
 

@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/antoni-ostrowski/simsync/simsync"
-	simsync_redis "github.com/antoni-ostrowski/simsync/simsync/backends/redis"
-	simsync_htmx "github.com/antoni-ostrowski/simsync/simsync/handlers/htmx"
+	"github.com/antoni-ostrowski/simsync"
+	simsync_redis "github.com/antoni-ostrowski/simsync/backends/redis"
+	simsync_htmx "github.com/antoni-ostrowski/simsync/handlers/htmx"
 	"github.com/redis/go-redis/v9"
 )
 

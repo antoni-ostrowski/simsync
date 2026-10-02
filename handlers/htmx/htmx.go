@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/antoni-ostrowski/simsync/simsync"
+	"github.com/antoni-ostrowski/simsync"
 )
 
 type Profile interface {

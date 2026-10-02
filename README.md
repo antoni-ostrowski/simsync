@@ -1,5 +1,9 @@
 # simsync
-simsync (simple sync) is a simple sync library, targeting flow of propagating updates from server to clients. It's focused around idea of tracking resources.
+simsync (simple sync) is a simple sync library, targeting flow of propagating updates from server to clients. It's focused around idea of tracking resources. Inspired by convex mechanisms, this small lib provides similar benefits with core diffs:
+
+- everything is explicit, you control if you want resource to be tracked, or when to invalidate it.
+- simsync doesn't care about how you store data, it only tracks *resources* and *who* is viewing them. 
+- high extensibility, engine is core, backend part, and how you propagate events can be customized (checkout [adapters](#adapters)).
 
 # installation
 
@@ -12,9 +16,16 @@ Checkout full example with simple htmx web app. (`/example`)
 
 ### overview
 
-Init sync engine.
+Init sync engine, pass backend implementation
 
 ```go
+
+import (
+    "github.com/antoni-ostrowski/simsync"
+	"github.com/redis/go-redis/v9"
+	simsync_redis "github.com/antoni-ostrowski/simsync/backends/redis"
+) 
+
 rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
 engine := simsync.New(simsync_redis.NewRedisBackend(rdb), time.Hour, "simsync")
 ```
@@ -74,12 +85,8 @@ If you want, you can easly implement your own backend with specific storage or p
 
 Handlers are also abstracted away, so you can implement the even propagation to clients however you like. Theres no concrete interface for handler yet, so to not force any structure, you have access to engine and can implement anything you like!
 
-### built in backend and handlers
+### adapters
 
 simsync has built in: 
 - redis backend (`simsync/backends/redis`)
 - htmx handler based on SSE (`simsync/handlers/htmx`)
-
-
-
-
