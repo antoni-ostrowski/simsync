@@ -6,6 +6,8 @@ simsync tracks which clients are viewing which resources, and fans out update me
 - simsync doesn't care about how you store data, it only tracks *resources* and *who* is viewing them. 
 - high extensibility, at it's core is engine struct, backend part and how you propagate events can be customized (checkout [adapters](#adapters)).
 
+> project still in early development
+
 > see demo from `/example` [demo](#demo)
 # installation
 
@@ -148,3 +150,6 @@ Then in your htmx:
 
 ```
 
+
+# contributions
+Please feel free to open issue & submit feedback! Made by [Antoni Ostrowski](https://antost.dev)
