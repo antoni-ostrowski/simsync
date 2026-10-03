@@ -1,5 +1,6 @@
 # simsync
-simsync (simple sync) is a simple sync library, targeting flow of propagating updates from server to clients. It's focused around idea of tracking resources. Inspired by convex mechanisms, this small lib provides similar benefits with core diffs:
+
+simsync tracks which clients are viewing which resources, and fans out update messages to just those clients when a resource changes. It doesn't store your data.
 
 - everything is explicit, you control if you want resource to be tracked, or when to invalidate it.
 - simsync doesn't care about how you store data, it only tracks *resources* and *who* is viewing them. 
@@ -28,66 +29,49 @@ import (
 ) 
 
 rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+// create engine, with TTL and prefix
 e := simsync.New(simsync_redis.NewRedisBackend(rdb), time.Hour, "simsync")
 ```
 
 Tracking resource. You pass resource that client has requested ("is viewing") and clientID.  
 
 ```go
-resourceName := "project1"
 clientID := "123"
-e.Track(ctx, clientID, resourceName)
+e.Track(ctx, clientID, "counter")
 ```
 
 
 Invalidating resource. Call after you updated the resource in your source of truth (database or other storage) and want clients to receive the update.
 
 ```go
-resourceName := "project1"
-newValue := "some_value" 
 // will send event to every client that is 'looking' at the resource
-// StreamMessage takes resource name and json.RawMessage, you can send new value state, or other data needed in event handler, or skip payload by passing empty string
-m, err := simsync.NewStreamMessage("counter", CounterPayload{Count: newCount})
+m := simsync.NewEventMessage("counter")
 e.Invalidate(ctx, m)
 
+```
+
+Untracking. Call when the client's update stream disconnects (SSE close) so it stops receiving updates. The bundled htmx handler already does this for you; only needed in custom handlers. Use a fresh context, the request one is already cancelled at that point.
+
+```go
+e.UntrackAll(context.Background(), clientID)
 ```
 
 
 ### custom backends and handlers
 
-Backend is interface used by main engine to store data and send out updates.
+Backend is the interface the engine uses to store viewer presence and deliver updates. See `simsync.go` (`Backend = Storer + PubSub`) for the exact definition — it's intentionally Redis-shaped (hash + set ops), so a custom backend emulates those semantics on whatever store/pubsub you use.
+
+If you want, you can easily implement your own backend with specific storage or pubsub system.
+
+Handlers are also abstracted away, so you can implement the event propagation to clients however you like. There's no concrete interface for handlers, so to not force any structure you get access to the engine and can implement anything you like! The engine lets you subscribe and handle events.
 
 ```go
-
-type Backend interface {
-	Storer
-	PubSub
+ch, cleanup := engine.SubscribeClient(ctx, clientID)
+defer cleanup()
+for msg := range ch {
+    json.NewEncoder(conn).Encode(msg) // or your own routing
 }
-
-// handles realtime events
-type PubSub interface {
-	Subscribe(ctx context.Context, channel string) (<-chan StreamMessage, func())
-	Publish(ctx context.Context, channel string, msg StreamMessage) error
-}
-
-
-// handles storage (KV, HashSets)
-type Storer interface {
-	HSet(ctx context.Context, key string, values ...any) error
-	SAdd(ctx context.Context, key string, members ...any) error
-	HKeys(ctx context.Context, key string) ([]string, error)
-	SMembers(ctx context.Context, key string) ([]string, error)
-	HDel(ctx context.Context, key string, fields ...string) error
-	Del(ctx context.Context, keys ...string) error
-	Expire(ctx context.Context, key string, expiration time.Duration) error
-}
-
 ```
-
-
-If you want, you can easly implement your own backend with specific storage or pubsub system. 
-
-Handlers are also abstracted away, so you can implement the even propagation to clients however you like. Theres no concrete interface for handler yet, so to not force any structure, you have access to engine and can implement anything you like! Engine backend lets you subscribe and handle events.
 
 
 ### demo
@@ -101,7 +85,11 @@ https://github.com/user-attachments/assets/f3eeb18f-0c3a-4c1e-86c5-0dda254acf00
 
 simsync has built in: 
 - redis backend (`simsync/backends/redis`)
-- htmx even handler based on SSE (`simsync/handlers/htmx`)
+- htmx event handler based on SSE (`simsync/handlers/htmx`)
+
+#### redis backend
+
+All viewer state (who looks at what) and pub/sub delivery live in Redis. The Go server holds no viewer state itself, so it stays stateless: any replica can `Track`/`Invalidate`, which is what makes this horizontally scalable.
 
 #### htmx handler
 
@@ -127,16 +115,36 @@ registry := simsync_htmx.NewRegistry(
 	}),
 )
 
-http.HandleFunc("GET /connect", simsync_htmx.CreateHtmxSSEHandler(engine, registry))
+resolveClient := func(r *http.Request) (string, error) {
+    // your auth logic to get clientID from req
+	return "aaa", nil
+}
+
+http.HandleFunc("GET /connect", simsync_htmx.CreateHtmxSSEHandler(engine, htmxRegistry, resolveClient))
 
 // invalidate to match:
 // 1. event needs no payload
-// will use the even name set in registry
-m, err := simsync.NewStreamMessage("counter", "")
+// will use the event name set in registry
+m := simsync.NewEventMessage("counter")
 e.Invalidate(ctx, m)
 
 // 2. markup payload must match the Markup[T] type
 m, err := simsync.NewStreamMessage("counter", CounterPayload{Count: newCount})
 e.Invalidate(ctx, m)
+```
+
+Then in your htmx:
+
+```html
+
+<body hx-sse:connect="/connect">
+	<!-- this is how you can listen on the events sent from SSE conn, with "hx-trigger" -->
+	<p id="counter-display" hx-get="/counter" hx-trigger="counter-event from:body" hx-swap="outerHTML">resource { val }</p>
+	<form hx-post="/counter" hx-swap="none">
+		<input name="counter" type="number"/>
+		<button type="submit">update counter</button>
+	</form>
+</body>
+
 ```
 

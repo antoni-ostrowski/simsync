@@ -81,18 +81,39 @@ func writeDataLines(w http.ResponseWriter, html string) {
 	fmt.Fprintf(w, "\n")
 }
 
-func CreateHtmxSSEHandler(engine *simsync.Engine, registry Registry) http.HandlerFunc {
+// CreateHtmxSSEHandler returns an SSE handler that streams resource updates
+// to one client. resolveClientID extracts the calling client's ID from the
+// request (session cookie, auth token, query param — whatever your app uses).
+// It runs before subscribing; empty ID or error rejects with 401.
+//
+// Tracking is not done here: call engine.Track when serving the page/fragment,
+// this handler only Subscribes for the SSE lifetime and calls UntrackAll with
+// a fresh context on disconnect (r.Context() is already cancelled there).
+func CreateHtmxSSEHandler(engine *simsync.Engine, registry Registry, resolveClientID func(r *http.Request) (string, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		clientID, err := resolveClientID(r)
+		if err != nil || clientID == "" {
+			slog.Debug("rejecting SSE connection, no client id", "error", err)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 
-		flusher := w.(http.Flusher)
-		userID := "aaa"
-		channel, close := engine.Backend.Subscribe(r.Context(), engine.GetUserChannel(userID))
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+		channel, cleanup := engine.SubscribeClient(r.Context(), clientID)
 		defer func() {
-			close()
-			engine.UntrackAll(context.Background(), userID)
+			cleanup()
+			// r.Context() is dead here, use a fresh one so cleanup can run.
+			if err := engine.UntrackAll(context.Background(), clientID); err != nil {
+				slog.Error("untrack failed", "error", err.Error(), "client", clientID)
+			}
 		}()
 		fmt.Fprintf(w, ": ok\n\n")
 		flusher.Flush()
@@ -120,9 +141,8 @@ func CreateHtmxSSEHandler(engine *simsync.Engine, registry Registry) http.Handle
 	}
 }
 
-// takes render func and executes it to generate markup string
-//
-// render func matches templ .Render func signature
+// RenderTemplToStr executes a templ-style render func into a markup string.
+// render matches templ's .Render signature: func(ctx, w) error.
 func RenderTemplToStr(ctx context.Context, render func(ctx context.Context, w io.Writer) error) (string, error) {
 	var buf bytes.Buffer
 	if err := render(ctx, &buf); err != nil {

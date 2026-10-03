@@ -28,7 +28,7 @@ func (s *Store) getCounter(ctx context.Context, e *simsync.Engine) int {
 func (s *Store) setCounter(ctx context.Context, newCount int, e *simsync.Engine) {
 	s.counter = newCount
 	// updated counter resource
-	m, _ := simsync.NewStreamMessage("counter", "")
+	m := simsync.NewEventMessage("counter")
 	e.Invalidate(ctx, m)
 }
 
@@ -58,7 +58,13 @@ func main() {
 		simsync_htmx.Event("counter", "counter-event"),
 	)
 
-	http.HandleFunc("GET /connect", simsync_htmx.CreateHtmxSSEHandler(engine, htmxRegistry))
+	// resolve the calling client however your app identifies users
+	// (session cookie, auth token, etc). Demo uses a fixed id.
+	resolveClient := func(r *http.Request) (string, error) {
+		return "aaa", nil
+	}
+
+	http.HandleFunc("GET /connect", simsync_htmx.CreateHtmxSSEHandler(engine, htmxRegistry, resolveClient))
 
 	http.HandleFunc("POST /counter", func(w http.ResponseWriter, r *http.Request) {
 		r.ParseForm()
